@@ -1,0 +1,22 @@
+# Generated pipeline data — reproducible by rerunning scripts, not tracked
+**/inputs/
+**/inputs_raw/
+**/inputs_prepared/
+**/outputs/
+**/outputs_raw/
+**/outputs_clean/
+**/sorted_raw/
+**/sorted_clean/
+**/logs/
+**/job_runs/
+**/json/
+04_alphafold/af3_runs/
+
+# Exploratory/scratch work — entire directory, not part of the pipeline proper
+trial_runs/
+
+# Python build artifacts
+**/__pycache__/
+*.pyc
+03_protein_mpnn/.mpnn_staging/
+03_protein_mpnn/.mpnn_pending_count
