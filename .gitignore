@@ -10,6 +10,7 @@
 **/logs/
 **/job_runs/
 **/json/
+**/scripts/archive
 04_alphafold/af3_runs/
 
 # Exploratory/scratch work — entire directory, not part of the pipeline proper
