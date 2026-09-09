@@ -8,6 +8,13 @@ from typing import Iterable, List, Optional, Sequence, Tuple
  
 RUN_LIST_SUFFIX = "_run.tsv"
 COUNTER_FILENAME = "global_seq_counter.txt"
+JOB_SEQ_DIGITS = 6
+
+SORTED_RAW_DIRNAME = "sorted_raw"
+SORTED_CLEAN_DIRNAME = "sorted_clean"
+TABLES_DIRNAME = "tables"
+
+OUTCOMES = ("passed", "rejected")
  
 # A run-list row: the json filename relative to json/<experiment>/, and the
 # global sequence number assigned to that one structure.
@@ -26,8 +33,8 @@ def group_key_from_json_rel(json_rel: str) -> str:
 def job_name(group_key: str, global_seq: int) -> str:
     """The stem shared by a structure's .cif, its .json, and its archive
     members: 'small' + 42 -> 'small_000042'."""
-    return f"{group_key}_{global_seq:06d}"
- 
+    return f"{group_key}_{global_seq:0{JOB_SEQ_DIGITS}d}"
+
  
 #Step 2. Inputs.
  
@@ -153,7 +160,10 @@ def read_run_list(path: Path) -> List[RunRow]:
             raise ValueError(f"{path}:{lineno}: global_seq must be an integer, got {raw_seq!r}")
         rows.append((json_rel, int(raw_seq)))
     return rows
- 
+
+
+# Stage 5. Filtering
+
  
 def group_rows(rows: Iterable[RunRow]) -> "dict[str, List[RunRow]]":
     """Run-list rows bucketed by group_key, preserving order within a group.
@@ -162,3 +172,64 @@ def group_rows(rows: Iterable[RunRow]) -> "dict[str, List[RunRow]]":
     for json_rel, global_seq in rows:
         grouped.setdefault(group_key_from_json_rel(json_rel), []).append((json_rel, global_seq))
     return grouped
+
+
+def group_key_from_job_name(name: str) -> str:
+    """'small_000042' -> 'small'. The inverse of job_name()."""
+    group_key, separator, sequence = name.rpartition("_")
+    if not separator or not group_key:
+        raise ValueError(
+            f"{name!r} is not '<group_key>_<{JOB_SEQ_DIGITS} digits>': no sequence suffix"
+        )
+    if not sequence.isdecimal() or len(sequence) < JOB_SEQ_DIGITS:
+        raise ValueError(
+            f"{name!r} is not '<group_key>_<{JOB_SEQ_DIGITS} digits>': "
+            f"trailing {sequence!r} is not a {JOB_SEQ_DIGITS}-digit number"
+        )
+    return group_key
+
+
+def clean_root(stage: Path) -> Path:
+    return stage / "outputs_clean"
+
+
+def clean_experiments(stage: Path) -> List[str]:
+    """Every experiment that has an outputs_clean/ folder."""
+    root = clean_root(stage)
+    if not root.is_dir():
+        return []
+    return sorted(path.name for path in root.iterdir() if path.is_dir())
+
+
+def sorted_scratch_dir(stage: Path, experiment: str) -> Path:
+    """Where members are extracted before their outcome is known."""
+    return stage / SORTED_RAW_DIRNAME / experiment / "_scratch"
+
+
+def sorted_raw_dir(stage: Path, experiment: str, outcome: str) -> Path:
+    """Loose routed files, before they are folded into a tarball."""
+    return stage / SORTED_RAW_DIRNAME / experiment / outcome
+
+
+def sorted_clean_dir(stage: Path, experiment: str, outcome: str) -> Path:
+    return stage / SORTED_CLEAN_DIRNAME / experiment / outcome
+
+
+def sorted_archive_path(stage: Path, experiment: str, outcome: str, group_key: str) -> Path:
+    """clean_archive_path() with an outcome level inserted:
+
+        outputs_clean/<experiment>/<group>.tar.gz            <- diffusion writes
+        sorted_clean/<experiment>/passed/<group>.tar.gz      <- the filter writes
+        sorted_clean/<experiment>/rejected/<group>.tar.gz
+    """
+    return sorted_clean_dir(stage, experiment, outcome) / f"{group_key}.tar.gz"
+
+
+def results_table_path(stage: Path, experiment: str) -> Path:
+    return stage / TABLES_DIRNAME / f"stage_01_results_{experiment}.csv"
+
+
+def legacy_results_table_path(stage: Path) -> Path:
+    """The single shared table the 16k production run wrote, before results
+    were split per experiment."""
+    return stage / TABLES_DIRNAME / "stage_01_results.csv"

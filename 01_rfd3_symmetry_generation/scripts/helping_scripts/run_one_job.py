@@ -46,14 +46,6 @@ STAGE = Path(__file__).resolve().parents[2]  # scripts/helping_scripts/../.. -> 
 ENV_FILE_REL = Path("scripts") / "env" / "rfd3.env"
 OVERLAY_REL = Path("overlay") / "rfd3_t3_overlay"
 
-# Sampler settings for this stage. They are named here rather than buried in
-# the command builder because they decide what the model actually produces:
-#   num_timesteps          diffusion steps per structure
-#   sym_step_frac          fraction of steps during which symmetry is enforced
-#                          ('+' because the key is added to the hydra config)
-#   classifier_free_guidance / allow_realignment
-#                          both off: the symmetry patch supplies the operation,
-#                          so the sampler must not re-align or re-weight it
 RFD3_SAMPLER_OVERRIDES: Tuple[str, ...] = (
     "diffusion_batch_size=1",
     "n_batches=1",
@@ -202,24 +194,7 @@ def _exact_order(symmetry_id: str) -> Optional[int]:
 def _prepare_rfd3_inputs(
     stage: Path, json_path: Path, work_dir: Path, run_env: Dict[str, str]
 ) -> Path:
-    """Give RFD3 an input it can actually apply the translational frames to.
-
-    The overlay returns the externally supplied frames only when the input has
-    multiplicity 1; with several copies present it recomputes them by aligning
-    the copies and builds [(R, [0,0,0])], discarding the translation. Nothing
-    catches that -- check_input_frames_match_symmetry_frames compares only the
-    frame *count* -- so a multi-copy seed silently collapses both copies onto
-    the same coordinates and one chain comes out.
-
-    So when the seed holds several copies, this measures the translation
-    between them, writes a single-protomer copy of the seed (ligand and fibril
-    kept) into the job's scratch directory, and points a rewritten json at it.
-    The seed file stays the single source of truth for the geometry; RFD3 just
-    receives it in the shape the patch requires.
-
-    Returns the json path to hand to RFD3 -- the original when nothing needed
-    changing.
-    """
+    """Give RFD3 an input it can actually apply the translational frames to."""
     try:
         data = json.loads(json_path.read_text(encoding="utf-8"))
         entries = jp.design_entries(data)
@@ -392,7 +367,34 @@ def _invoke_rfd3(stage: Path, env: Rfd3Env, overlay_root: Path, json_path: Path,
 # Step 2. Locating outputs
 
 
+def _metadata_json_for(produced_cifgz: Path) -> Optional[Path]:
+    """RFD3's metrics json for one produced structure: same directory, same
+    stem, .json instead of .cif.gz --
+
+        prepared_xlarge_xlarge_0_model_0.cif.gz
+        prepared_xlarge_xlarge_0_model_0.json
+
+    Path.stem strips only one suffix, so the '.cif.gz' double extension is
+    removed explicitly. Returns None if RFD3 wrote no matching file.
+    """
+    name = produced_cifgz.name
+    for suffix in (".cif.gz", ".cif"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    candidate = produced_cifgz.with_name(f"{name}.json")
+    return candidate if candidate.is_file() else None
+
+
 def _locate_outputs(work_dir: Path) -> Tuple[Path, Optional[Path]]:
+    """The one .cif.gz RFD3 produced, and the metadata json belonging to it.
+
+    The json is matched to the structure by name, not by being the only json
+    in the directory: _prepare_rfd3_inputs writes the rewritten input json
+    into this same folder (out_dir and our scratch dir are one and the same),
+    so a glob finds two and the metadata would be dropped with only a warning
+    -- leaving the filter with a structure it cannot evaluate.
+    """
     cifgz_files = sorted(work_dir.rglob("*.cif.gz"))
     if not cifgz_files:
         listing = "\n".join(f"  {p}" for p in sorted(work_dir.rglob("*")) if p.is_file())
@@ -402,20 +404,16 @@ def _locate_outputs(work_dir: Path) -> Tuple[Path, Optional[Path]]:
     if len(cifgz_files) > 1:
         listing = "\n".join(f"  {p}" for p in cifgz_files)
         raise JobError(f"expected exactly 1 .cif.gz output, found {len(cifgz_files)}:\n{listing}")
+
     produced_cifgz = cifgz_files[0]
     _log(f"Found structure: {produced_cifgz}")
 
-    produced_dir = produced_cifgz.parent
-    json_files = sorted(produced_dir.glob("*.json"))
-    produced_json: Optional[Path] = None
-    if not json_files:
-        _log(f"WARNING: no .json metadata file found in {produced_dir}")
-    elif len(json_files) > 1:
-        listing = "\n".join(f"  {p}" for p in json_files)
-        _log(f"WARNING: expected exactly 1 .json metadata file in {produced_dir}, "
-             f"found {len(json_files)}:\n{listing}")
+    produced_json = _metadata_json_for(produced_cifgz)
+    if produced_json is None:
+        present = sorted(path.name for path in produced_cifgz.parent.glob("*.json"))
+        _log(f"WARNING: no metadata json named after {produced_cifgz.name} in "
+             f"{produced_cifgz.parent}; jsons present: {present or '(none)'}")
     else:
-        produced_json = json_files[0]
         _log(f"Found metadata: {produced_json}")
     return produced_cifgz, produced_json
 

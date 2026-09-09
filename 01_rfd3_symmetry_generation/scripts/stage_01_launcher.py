@@ -34,6 +34,7 @@ sys.path.insert(0, str(HELPING_SCRIPTS_DIR))
 import job_paths as jp  # noqa: E402
 import run_cluster  # noqa: E402
 import run_workstation  # noqa: E402
+from filter_designs import Stage01InputError, run_filter  # noqa: E402
 from run_one_job import archive_experiment, exclusive_lock  # noqa: E402
 from symmetry_check import (  # noqa: E402
     StructureError,
@@ -64,7 +65,7 @@ class JsonValidationResult:
 
 
 def _missing_keys(data: dict, required_keys: Sequence[str], label: str) -> str:
-    """Empty string means everything's present."""
+    """Empty string means everything is present."""
     missing = [key for key in required_keys if key not in data]
     return f"{label} missing required field(s): {missing}" if missing else ""
 
@@ -338,6 +339,26 @@ def archive(stage: Path, experiment: str, rows: Sequence[jp.RunRow]) -> None:
                  f"not on disk, not archived: {preview}{more}")
 
 
+def filter_structures(stage: Path) -> bool:
+    """Sort everything unfiltered in outputs_clean/ into passed/rejected."""
+    _log("[filter] sorting structures into passed/rejected...")
+    try:
+        report = run_filter(stage)
+    except (OSError, ValueError, Stage01InputError) as exc:
+        _log(f"[filter] FAILED: {exc}")
+        _log("[filter] generation and archiving are unaffected -- fix the cause and "
+             "re-run scripts/helping_scripts/filter_designs.py")
+        return False
+
+    _log(f"[filter] {report.summary()}")
+    for table in report.tables:
+        _log(f"[filter] results -> {table}")
+    if not report.ok:
+        _log(f"[filter] {report.counts.get('ERROR', 0)} structure(s) could not be "
+             f"evaluated -- see the error_reason column")
+    return report.ok
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -346,6 +367,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--stage", type=Path, default=STAGE_ROOT,
         help=f"stage root directory (default: {STAGE_ROOT})",
+    )
+    parser.add_argument(
+        "--no-filter", action="store_true",
+        help="generate only; skip the geometry filter that normally runs afterwards",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -378,11 +403,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     report = dispatch(args.experiment, run_list, stage)
     archive(stage, args.experiment, report.rows)
 
-    if not report.ok:
-        _log(f"[done] {report.summary()}")
-        return 1
+    filtered_ok = True
+    if not args.no_filter:
+        filtered_ok = filter_structures(stage)
+
     _log(f"[done] {report.summary()}")
-    return 0
+    return 0 if report.ok and filtered_ok else 1
 
 
 if __name__ == "__main__":
