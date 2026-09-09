@@ -20,3 +20,6 @@ trial_runs/
 *.pyc
 03_protein_mpnn/.mpnn_staging/
 03_protein_mpnn/.mpnn_pending_count
+
+# Stage-01 input jsons are hand-written inputs, not generated output
+!01_rfd3_symmetry_generation/json/

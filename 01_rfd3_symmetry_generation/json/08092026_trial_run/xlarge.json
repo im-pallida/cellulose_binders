@@ -1,0 +1,25 @@
+{
+  "xlarge": {
+    "input": "/home/karina/1cbh_clear/00_reference_structures/seed/2xseed_AB_1xcellulose_dp20_merged.pdb",
+    "contig": "27-40,B5-5,18-24,B26-26,1-3,B28-32,1-3,B34-35,27-40",
+    "length": "83-119",
+    "select_fixed_atoms": {
+      "B5": "ALL",
+      "B26": "BKBN",
+      "B28": "BKBN",
+      "B29": "ALL",
+      "B30": "BKBN",
+      "B31": "ALL",
+      "B32": "ALL",
+      "B34": "ALL",
+      "B35": "BKBN"
+    },
+    "select_exposed": "B5,B31,B32",
+    "is_non_loopy": true,
+    "plddt_enhanced": true,
+    "symmetry": {
+      "id": "T2EXACT",
+      "is_symmetric_motif": true
+    }
+  }
+}

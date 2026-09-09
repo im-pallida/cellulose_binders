@@ -1,0 +1,13 @@
+{
+  "trial": {
+    "input": "/home/karina/1cbh_clear/00_reference_structures/seed/chitin_trial.pdb",
+    "contig": "25-35,A274-326,25-35",
+    "length": "103-123",
+    "is_non_loopy": true,
+    "plddt_enhanced": true,
+    "symmetry": {
+      "id": "T2EXACT",
+      "is_symmetric_motif": false
+    }
+  }
+}
