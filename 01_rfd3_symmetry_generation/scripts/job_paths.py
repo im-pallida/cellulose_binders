@@ -15,6 +15,9 @@ SORTED_CLEAN_DIRNAME = "sorted_clean"
 TABLES_DIRNAME = "tables"
 
 OUTCOMES = ("passed", "rejected")
+
+STAGE02_DIRNAME = "02_geometry_filtering"
+STAGE02_INPUTS_DIRNAME = "inputs"
  
 # A run-list row: the json filename relative to json/<experiment>/, and the
 # global sequence number assigned to that one structure.
@@ -233,3 +236,41 @@ def legacy_results_table_path(stage: Path) -> Path:
     """The single shared table the 16k production run wrote, before results
     were split per experiment."""
     return stage / TABLES_DIRNAME / "stage_01_results.csv"
+
+
+# Step 6. Handing passed structures to stage 02.
+
+
+def project_root(stage: Path) -> Path:
+    """The folder holding all the numbered stage directories."""
+    return stage.parent
+
+
+def stage02_root(stage: Path) -> Path:
+    return project_root(stage) / STAGE02_DIRNAME
+
+
+def stage02_inputs_dir(stage: Path, experiment: str) -> Path:
+    return stage02_root(stage) / STAGE02_INPUTS_DIRNAME / experiment
+
+
+def stage02_archive_path(stage: Path, experiment: str, group_key: str) -> Path:
+    """Where a group's passed structures land for stage 02. Deliberately the
+    same <group>.tar.gz filename as the source, just relocated:
+
+        sorted_clean/<experiment>/passed/<group>.tar.gz          <- stage 01 writes
+        ../02_geometry_filtering/inputs/<experiment>/<group>.tar.gz
+    """
+    return stage02_inputs_dir(stage, experiment) / f"{group_key}.tar.gz"
+
+
+def sorted_clean_root(stage: Path) -> Path:
+    return stage / SORTED_CLEAN_DIRNAME
+
+
+def sorted_experiments(stage: Path) -> List[str]:
+    """Every experiment that has been through the filter."""
+    root = sorted_clean_root(stage)
+    if not root.is_dir():
+        return []
+    return sorted(path.name for path in root.iterdir() if path.is_dir())

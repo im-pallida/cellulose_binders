@@ -43,6 +43,7 @@ from symmetry_check import (  # noqa: E402
     has_ligand,
     load_structure,
 )
+from transfer_to_stage02 import TransferError, run_transfer  # noqa: E402
 
 REQUIRED_TOP_LEVEL_KEYS = ("input", "contig", "symmetry")
 REQUIRED_SYMMETRY_KEYS = ("id",)
@@ -359,6 +360,26 @@ def filter_structures(stage: Path) -> bool:
     return report.ok
 
 
+def transfer_structures(stage: Path) -> bool:
+    """Hand every passed structure not already in stage 02 across to it."""
+    _log("[transfer] handing passed structures to stage 02...")
+    try:
+        report = run_transfer(stage)
+    except (OSError, TransferError) as exc:
+        _log(f"[transfer] FAILED: {exc}")
+        _log("[transfer] everything up to this point is unaffected -- fix the cause "
+             "and re-run scripts/helping_scripts/transfer_to_stage02.py")
+        return False
+
+    _log(f"[transfer] {report.summary()}")
+    if report.incomplete:
+        preview = ", ".join(report.incomplete[:5])
+        more = f" (+{len(report.incomplete) - 5} more)" if len(report.incomplete) > 5 else ""
+        _log(f"[transfer] {len(report.incomplete)} passed structure(s) could not be "
+             f"transferred, missing half their file pair: {preview}{more}")
+    return report.ok
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -371,6 +392,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-filter", action="store_true",
         help="generate only; skip the geometry filter that normally runs afterwards",
+    )
+    parser.add_argument(
+        "--no-transfer", action="store_true",
+        help="skip handing passed structures to stage 02 after filtering",
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -407,8 +432,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not args.no_filter:
         filtered_ok = filter_structures(stage)
 
+    transferred_ok = True
+    if not args.no_transfer:
+        transferred_ok = transfer_structures(stage)
+
     _log(f"[done] {report.summary()}")
-    return 0 if report.ok and filtered_ok else 1
+    return 0 if report.ok and filtered_ok and transferred_ok else 1
 
 
 if __name__ == "__main__":
