@@ -24,3 +24,9 @@ trial_runs/
 
 # Stage-01 input jsons are hand-written inputs, not generated output
 !01_rfd3_symmetry_generation/json/
+
+# Local checkpoint copy or symlink, machine-specific
+01_rfd3_symmetry_generation/checkpoints/
+
+# Local checkpoint copy or symlink, machine-specific
+01_rfd3_symmetry_generation/checkpoints/
