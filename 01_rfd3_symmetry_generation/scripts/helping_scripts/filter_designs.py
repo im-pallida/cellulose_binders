@@ -31,7 +31,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# job_paths.py is shared by every stage and lives at the repo root, so a
+# fix to the naming rules reaches all of them at once.
+# helping_scripts/ -> scripts/ -> <stage>/ -> <repo root>/common
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "common"))
 import job_paths as jp  # noqa: E402
 
 STAGE = Path(__file__).resolve().parents[2]

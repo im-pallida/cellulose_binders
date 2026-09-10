@@ -28,7 +28,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 SCRIPT_DIR = Path(__file__).resolve().parent
 STAGE_ROOT = SCRIPT_DIR.parent
 HELPING_SCRIPTS_DIR = SCRIPT_DIR / "helping_scripts"
+# job_paths.py is shared by every stage and lives at the repo root.
+COMMON_DIR = STAGE_ROOT.parent / "common"
 
+sys.path.insert(0, str(COMMON_DIR))
 sys.path.insert(0, str(HELPING_SCRIPTS_DIR))
 
 import job_paths as jp  # noqa: E402

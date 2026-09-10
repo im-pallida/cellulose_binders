@@ -18,7 +18,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+# job_paths.py is shared by every stage and lives at the repo root, so a
+# fix to the naming rules reaches all of them at once.
+# helping_scripts/ -> scripts/ -> <stage>/ -> <repo root>/common
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "common"))
 import job_paths as jp  # noqa: E402
 
 # Shared with the filter on purpose. If the two disagreed about what counts as
