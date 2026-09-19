@@ -8,16 +8,6 @@ from typing import Iterable, List, Optional, Sequence, Tuple
  
 RUN_LIST_SUFFIX = "_run.tsv"
 COUNTER_FILENAME = "global_seq_counter.txt"
-JOB_SEQ_DIGITS = 6
-
-SORTED_RAW_DIRNAME = "sorted_raw"
-SORTED_CLEAN_DIRNAME = "sorted_clean"
-TABLES_DIRNAME = "tables"
-
-OUTCOMES = ("passed", "rejected")
-
-STAGE02_DIRNAME = "02_geometry_filtering"
-STAGE02_INPUTS_DIRNAME = "inputs"
  
 # A run-list row: the json filename relative to json/<experiment>/, and the
 # global sequence number assigned to that one structure.
@@ -33,11 +23,17 @@ def group_key_from_json_rel(json_rel: str) -> str:
     return json_rel.removesuffix(".json")
  
  
+# job_name() zero-pads to this width and group_key_from_job_name() undoes it.
+# They must agree: if they ever drift, every structure is filed into the
+# wrong archive without anything raising.
+JOB_SEQ_DIGITS = 6
+
+
 def job_name(group_key: str, global_seq: int) -> str:
     """The stem shared by a structure's .cif, its .json, and its archive
     members: 'small' + 42 -> 'small_000042'."""
     return f"{group_key}_{global_seq:0{JOB_SEQ_DIGITS}d}"
-
+ 
  
 #Step 2. Inputs.
  
@@ -163,10 +159,7 @@ def read_run_list(path: Path) -> List[RunRow]:
             raise ValueError(f"{path}:{lineno}: global_seq must be an integer, got {raw_seq!r}")
         rows.append((json_rel, int(raw_seq)))
     return rows
-
-
-# Stage 5. Filtering
-
+ 
  
 def group_rows(rows: Iterable[RunRow]) -> "dict[str, List[RunRow]]":
     """Run-list rows bucketed by group_key, preserving order within a group.
@@ -177,8 +170,28 @@ def group_rows(rows: Iterable[RunRow]) -> "dict[str, List[RunRow]]":
     return grouped
 
 
+# Step 5. Filtering: sorted outputs and per-experiment result tables.
+
+SORTED_RAW_DIRNAME = "sorted_raw"
+SORTED_CLEAN_DIRNAME = "sorted_clean"
+TABLES_DIRNAME = "tables"
+
+# The two buckets the geometry filter sorts structures into. "rejected"
+# matches the REJECTED status written in the results table, and only
+# "passed" is ever read by the stage-02 transfer.
+OUTCOMES = ("passed", "rejected")
+
 def group_key_from_job_name(name: str) -> str:
-    """'small_000042' -> 'small'. The inverse of job_name()."""
+    """'small_000042' -> 'small'. The inverse of job_name().
+
+    Splits on the *last* underscore, so a group key containing underscores
+    survives: 'chitin_trial_000001' -> 'chitin_trial'.
+
+    Raises ValueError rather than guessing. A name this cannot parse is a
+    structure from a different naming scheme (the 16k production ids looked
+    like 'hsl014024'), and inventing a group for it would file the structure
+    into the wrong archive silently.
+    """
     group_key, separator, sequence = name.rpartition("_")
     if not separator or not group_key:
         raise ValueError(
@@ -197,7 +210,7 @@ def clean_root(stage: Path) -> Path:
 
 
 def clean_experiments(stage: Path) -> List[str]:
-    """Every experiment that has an outputs_clean/ folder."""
+    """Every experiment that has an outputs_clean/ folder, oldest name first."""
     root = clean_root(stage)
     if not root.is_dir():
         return []
@@ -228,17 +241,37 @@ def sorted_archive_path(stage: Path, experiment: str, outcome: str, group_key: s
     return sorted_clean_dir(stage, experiment, outcome) / f"{group_key}.tar.gz"
 
 
+def stage_label(stage: Path) -> str:
+    """'01' from '01_rfd3_symmetry_generation', '02' from '02_geometry_filtering'.
+
+    Taken from the directory rather than hardcoded so one copy of these helpers
+    serves every stage. A directory that does not start with digits falls back
+    to its own name, which is wrong-looking rather than silently wrong.
+    """
+    name = stage.name
+    digits = ""
+    for character in name:
+        if not character.isdigit():
+            break
+        digits += character
+    return digits or name
+
+
 def results_table_path(stage: Path, experiment: str) -> Path:
-    return stage / TABLES_DIRNAME / f"stage_01_results_{experiment}.csv"
+    return stage / TABLES_DIRNAME / f"stage_{stage_label(stage)}_results_{experiment}.csv"
 
 
 def legacy_results_table_path(stage: Path) -> Path:
     """The single shared table the 16k production run wrote, before results
-    were split per experiment."""
+    were split per experiment. Read as a fallback so those structures are
+    still recognised as already filtered; never written to."""
     return stage / TABLES_DIRNAME / "stage_01_results.csv"
 
 
 # Step 6. Handing passed structures to stage 02.
+
+STAGE02_DIRNAME = "02_geometry_filtering"
+STAGE02_INPUTS_DIRNAME = "inputs"
 
 
 def project_root(stage: Path) -> Path:
@@ -274,3 +307,57 @@ def sorted_experiments(stage: Path) -> List[str]:
     if not root.is_dir():
         return []
     return sorted(path.name for path in root.iterdir() if path.is_dir())
+
+
+# Step 7. Stage 02: geometry filtering.
+#
+# The same shapes as stage 01, one stage along. A stage's own root is always
+# passed in, so these work whichever stage directory calls them.
+
+STAGE01_DIRNAME = "01_rfd3_symmetry_generation"
+STAGE03_DIRNAME = "03_protein_mpnn"
+INPUTS_DIRNAME = "inputs"
+
+
+def inputs_root(stage: Path) -> Path:
+    """Where the previous stage's transfer wrote its archives."""
+    return stage / INPUTS_DIRNAME
+
+
+def inputs_experiments(stage: Path) -> List[str]:
+    root = inputs_root(stage)
+    if not root.is_dir():
+        return []
+    return sorted(path.name for path in root.iterdir() if path.is_dir())
+
+
+def input_archive_path(stage: Path, experiment: str, group_key: str) -> Path:
+    return inputs_root(stage) / experiment / f"{group_key}.tar.gz"
+
+
+def stage01_root(stage: Path) -> Path:
+    return project_root(stage) / STAGE01_DIRNAME
+
+
+def stage01_json_path(stage: Path, experiment: str, group_key: str) -> Path:
+    """The stage-01 json a group was generated from.
+
+    group_key is the json's filename stem (job_name() encodes it, and the
+    transfer keeps the archive named after it), so a structure's generating
+    config -- and through it its seed -- is recoverable from the archive path
+    alone, with nothing extra recorded anywhere.
+    """
+    return experiment_json_dir(stage01_root(stage), experiment) / f"{group_key}.json"
+
+
+def stage03_root(stage: Path) -> Path:
+    return project_root(stage) / STAGE03_DIRNAME
+
+
+def stage03_inputs_dir(stage: Path, experiment: str) -> Path:
+    return stage03_root(stage) / INPUTS_DIRNAME / experiment
+
+
+def stage03_archive_path(stage: Path, experiment: str, group_key: str) -> Path:
+    return stage03_inputs_dir(stage, experiment) / f"{group_key}.tar.gz"
+
