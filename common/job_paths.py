@@ -227,6 +227,17 @@ def sorted_raw_dir(stage: Path, experiment: str, outcome: str) -> Path:
     return stage / SORTED_RAW_DIRNAME / experiment / outcome
 
 
+def sorted_raw_group_dir(stage: Path, experiment: str, outcome: str, group_key: str) -> Path:
+    """Loose routed files, kept under the group they came from.
+
+    The group a structure belongs to is the archive it arrived in, which the
+    caller already knows. Putting it in the path means archiving never has to
+    recover it by parsing a protein id -- names from older runs (hsx015039)
+    do not carry one, and deriving it there crashed the whole regrouping step.
+    """
+    return sorted_raw_dir(stage, experiment, outcome) / group_key
+
+
 def sorted_clean_dir(stage: Path, experiment: str, outcome: str) -> Path:
     return stage / SORTED_CLEAN_DIRNAME / experiment / outcome
 

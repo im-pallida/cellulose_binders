@@ -1,5 +1,6 @@
 """
 Tar-archive and results-table handling shared by every stage.
+
 """
 from __future__ import annotations
 
@@ -42,7 +43,8 @@ class SortResult:
 
 
 def group_members_by_protein(member_names: Sequence[str]) -> Dict[str, Dict[str, str]]:
-    """Group tar members by protein_id -> {'json': name, 'structure': name}."""
+    """Group tar members by protein_id -> {'json': name, 'structure': name}.
+    """
     groups: Dict[str, Dict[str, str]] = {}
     for member_name in member_names:
         suffix = Path(member_name).suffix.lower()
@@ -105,9 +107,6 @@ def _write_and_swap(
 
 def merge_files_into_archive(archive_path: Path, files: Sequence[Path]) -> Tuple[int, int]:
     """Add loose files on disk to an archive, keeping what is already in it.
-
-    Returns (added, total) counted in members. The loose originals are deleted
-    only once the swap has succeeded.
     """
     existing = read_archive_members(archive_path) if archive_path.exists() else []
     existing_names = {info.name for info, _ in existing}
@@ -155,19 +154,31 @@ def merge_members_into_archive(
 
 
 def regroup_and_archive(stage: Path, experiment: str) -> List[SortResult]:
-    """Fold a run's loose routed files into per-group tarballs."""
+    """Fold a run's loose routed files into per-group tarballs.
+    """
     results: List[SortResult] = []
     for outcome in jp.OUTCOMES:
         raw_dir = jp.sorted_raw_dir(stage, experiment, outcome)
         if not raw_dir.is_dir():
             continue
-        loose_files = sorted(path for path in raw_dir.iterdir() if path.is_file())
+        loose_files = sorted(path for path in raw_dir.rglob("*") if path.is_file())
         if not loose_files:
             continue
 
         files_by_group: Dict[str, List[Path]] = {}
         for file_path in loose_files:
-            group_key = jp.group_key_from_job_name(file_path.stem)
+            # A file under <outcome>/<group>/ already states its group. Only a
+            # file sitting directly in <outcome>/ has to have it derived, and a
+            # name that cannot be parsed is reported rather than raised: one
+            # unfilable file must not strand every other group's.
+            if file_path.parent != raw_dir:
+                group_key = file_path.parent.name
+            else:
+                try:
+                    group_key = jp.group_key_from_job_name(file_path.stem)
+                except ValueError as exc:
+                    _log(f"[archive] cannot file {file_path.name}: {exc}")
+                    continue
             files_by_group.setdefault(group_key, []).append(file_path)
 
         for group_key, group_files in sorted(files_by_group.items()):
@@ -182,7 +193,8 @@ def regroup_and_archive(stage: Path, experiment: str) -> List[SortResult]:
 def load_table(
     table_path: Path, legacy_path: Optional[Path] = None, experiment: Optional[str] = None
 ) -> Dict[str, Dict[str, str]]:
-    """Existing rows keyed by protein_id -- the set of structures to skip."""
+    """Existing rows keyed by protein_id -- the set of structures to skip.
+    """
     source = table_path
     if not table_path.exists() and legacy_path is not None and legacy_path.exists():
         source = legacy_path

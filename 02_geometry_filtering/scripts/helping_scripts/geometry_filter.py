@@ -8,10 +8,18 @@ clashes and contacts.
     sorted_clean/<experiment>/passed/<group>.tar.gz        <- this writes
     sorted_clean/<experiment>/rejected/<group>.tar.gz
 
-Rule: 
     protein-protein clashes  CA-CA <= 1.8 A   must be 0
     protein-ligand clashes   all-atom <= 2.2 A must be 0
     protein-protein contacts CA-CA in [4, 8]  must be >= 7
+
+Statuses
+    PASSED / REJECTED  the structure was evaluated and met or missed the cutoffs
+    SKIPPED            the seed has no ligand chain, so there is nothing to
+                       check the design against; the structure is left in the
+                       input archive untouched
+    ERROR              the structure could not be evaluated (no json, no
+                       align keys, a seed that cannot be read). Recorded with a
+                       reason so one bad structure does not abort a 16k run.
 """
 from __future__ import annotations
 
@@ -43,8 +51,7 @@ import tarfile  # noqa: E402  (after the path setup, like the rest)
 
 STAGE = Path(__file__).resolve().parents[2]
 
-# Cutoffs, kept exactly as the production run used them so its 16k rows stay
-# directly comparable with anything generated now.
+# Cutoffs
 CLASH_MAX = 0
 LIGAND_CLASH_MAX = 0
 CONTACT_MIN = 7
@@ -59,8 +66,7 @@ TYR_AXIS_ATOMS = ("CA", "CB", "CG", "CZ", "OH")
 
 CHECKPOINT_SIZE = 100
 
-# Protein-ligand distances are all-atom, so the pair count can be large. Rows
-# of the distance matrix are computed in blocks to bound peak memory.
+# Protein-ligand distances are all-atom, so the pair count can be large.
 DISTANCE_BLOCK = 512
 
 RESULT_FIELDS = [
@@ -131,17 +137,11 @@ class FilterReport:
                 f"{len(self.archives)} archive(s) updated")
 
 
-# ---------------------------------------------------------------------------
-# Layer 1: the seed
-# ---------------------------------------------------------------------------
+# Step 1. The seed
 
 
 def classify_chains(structure: gemmi.Structure) -> Tuple[List[str], List[str]]:
     """(protein chains, everything else), decided by residue type.
-
-    A chain counts as protein if it holds any amino acid. gemmi's residue
-    table knows BGL and NAG are not amino acids, so cellulose and chitin both
-    land in the second list without either being named anywhere.
     """
     protein: List[str] = []
     ligand: List[str] = []
@@ -158,12 +158,6 @@ def classify_chains(structure: gemmi.Structure) -> Tuple[List[str], List[str]]:
 
 def seed_for_group(stage: Path, experiment: str, group_key: str) -> Seed:
     """The seed a group was generated from.
-
-    group_key is the stage-01 json's filename stem, which job_name() encoded
-    into every structure's name and the transfer preserved in the archive
-    name. So the generating config -- and through it the seed -- is
-    recoverable from the archive path alone, with nothing recorded anywhere
-    along the way.
     """
     json_path = jp.stage01_json_path(stage, experiment, group_key)
     if not json_path.is_file():
@@ -211,9 +205,7 @@ def seed_for_group(stage: Path, experiment: str, group_key: str) -> Seed:
     return Seed(seed_path, structure, protein, ligand)
 
 
-# ---------------------------------------------------------------------------
-# Layer 2: alignment
-# ---------------------------------------------------------------------------
+# Step 2. Alignment
 
 
 def split_map_key(key: str) -> Tuple[str, int]:
@@ -227,9 +219,6 @@ def split_map_key(key: str) -> Tuple[str, int]:
 
 def json_alignment(payload: dict) -> Tuple[dict, List[str]]:
     """The two things alignment needs out of a structure's metadata json.
-
-    align_keys come from specification.select_exposed and are read per protein
-    rather than hardcoded: not every design fixes the same anchor residues.
     """
     diffused_index_map = payload.get("diffused_index_map")
     if not isinstance(diffused_index_map, dict) or not diffused_index_map:
@@ -260,11 +249,6 @@ def derive_seed_chains(
     diffused_index_map: dict, align_keys: Sequence[str], seed_protein_chains: Sequence[str]
 ) -> Tuple[str, str]:
     """(directly-named seed chain, the other one).
-
-    The old code hardcoded ('B','C'). It never needed to: the keys of
-    diffused_index_map are seed residues, chain letter included, so the chain
-    the motif sits in is already in the data. Reading it there is what lets one
-    filter serve seeds whose chains are named differently.
     """
     named = {split_map_key(key)[0] for key in align_keys if key in diffused_index_map}
     if len(named) != 1:
@@ -286,9 +270,6 @@ def assign_generated_chains(
     align_keys: Sequence[str], seed_chains: Tuple[str, str],
 ) -> Dict[str, str]:
     """{generated chain: seed chain it aligns onto}.
-
-    One generated chain is directly named by this protein's own align keys;
-    the other is its symmetry copy and takes the seed's other chain.
     """
     if len(generated_chains) != 2:
         raise GeometryError(
@@ -316,9 +297,6 @@ def build_alignment_pairs(
     fit_atom_names: Sequence[str] = TYR_AXIS_ATOMS,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Matched (generated, seed) coordinate arrays for one chain pair.
-
-    Only atoms present on both sides are used, so a partially resolved anchor
-    residue narrows the fit rather than failing it.
     """
     generated_coords: List[np.ndarray] = []
     seed_coords: List[np.ndarray] = []
@@ -340,9 +318,6 @@ def build_alignment_pairs(
 
 def kabsch(moving: np.ndarray, fixed: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
     """Rigid transform taking `moving` onto `fixed`, plus the fit rmsd.
-
-    Centred SVD with the determinant forced positive, so a reflection is never
-    returned as a fit -- a mirrored protein is not the same protein.
     """
     if moving.shape[0] < 3:
         raise GeometryError(f"need at least 3 fit atoms, got {moving.shape[0]}")
@@ -358,9 +333,7 @@ def kabsch(moving: np.ndarray, fixed: np.ndarray) -> Tuple[np.ndarray, np.ndarra
     return rotation, translation, rmsd
 
 
-# ---------------------------------------------------------------------------
-# Layer 3: geometry
-# ---------------------------------------------------------------------------
+# Step 3. Geometry
 
 
 def _blocked_min_distances(a: np.ndarray, b: np.ndarray):
@@ -415,9 +388,8 @@ def decide_status(
     return ("REJECTED" if reasons else "PASSED"), reasons
 
 
-# ---------------------------------------------------------------------------
-# Layer 4: rows
-# ---------------------------------------------------------------------------
+
+# Step 4. Rows
 
 
 def build_row(protein_id: str, experiment: str, seed: Optional[Seed], status: str,
@@ -459,9 +431,7 @@ def table_sort_key(row: Dict[str, str]) -> tuple:
     return (rank, contacts, row.get("protein_id", ""))
 
 
-# ---------------------------------------------------------------------------
-# Layer 5: one structure
-# ---------------------------------------------------------------------------
+# Step 5. One structure
 
 
 def _coords_and_resi(structure: gemmi.Structure, chain_name: str,
@@ -566,10 +536,7 @@ def evaluate_structure(structure: gemmi.Structure, payload: dict, seed: Seed
     return (max(rmsds), clash_count, clashing, contact_count, ligand_clash_count)
 
 
-# ---------------------------------------------------------------------------
-# Layer 6: orchestrator
-# ---------------------------------------------------------------------------
-
+# Step 6. Orchestrator
 
 def archives_to_scan(stage: Path, experiment: Optional[str] = None) -> Dict[str, List[Path]]:
     """{experiment: [inputs/<experiment>/<group>.tar.gz, ...]}."""
@@ -661,7 +628,7 @@ def _scan_archive(stage: Path, experiment: str, tar_path: Path,
                  + (f" ({';'.join(reasons)})" if reasons else ""))
 
             outcome = "passed" if status == "PASSED" else "rejected"
-            target_dir = jp.sorted_raw_dir(stage, experiment, outcome)
+            target_dir = jp.sorted_raw_group_dir(stage, experiment, outcome, group_key)
             target_dir.mkdir(parents=True, exist_ok=True)
             # PDB, not cif: stage 03 reads the chain letter out of column 22.
             structure.write_pdb(str(target_dir / f"{protein_id}.pdb"))
